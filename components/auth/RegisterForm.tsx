@@ -2,187 +2,479 @@
 
 import { useState } from "react";
 
+import { api } from "@/lib/api/client";
 export default function RegisterPage() {
+  // --- States ---
   const [plan, setPlan] = useState("trial");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [companyName, setCompanyName] = useState("");
+  const [subdomain, setSubdomain] = useState("");
 
+  const [otpCode, setOtpCode] = useState("");
+  const [showOtp, setShowOtp] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  const [showGoogleSetup, setShowGoogleSetup] = useState(false);
+  const [setupToken, setSetupToken] = useState("");
+  const [googleSubdomain, setGoogleSubdomain] = useState("");
+  const [googleCompanyName, setGoogleCompanyName] = useState("");
+
+  const [googleLoading, setGoogleLoading] = useState(false);
+
+  // Pointing to api.localhost:8000 is necessary to route to assistly_auth schema
+  const API_BASE_URL = "http://api.localhost:8000";
+
+  // Safely parses JSON error responses without crashing on non-JSON payloads
+  async function parseResponseData(response: Response) {
+    const contentType = response.headers.get("content-type");
+    if (contentType && contentType.includes("application/json")) {
+      return await response.json();
+    }
+    return null;
+  }
+
+  async function handleGoogleCallback(response: any) {
+    setGoogleLoading(true);
+    setError("");
+
+    try {
+      const res = await api.post("/auth/google", {
+        id_token: response.credential,
+      });
+
+      const data = res.data;
+
+      if (data?.requires_setup) {
+        setSetupToken(data.setup_token);
+        setShowGoogleSetup(true);
+      } else if (data?.access_token) {
+        localStorage.setItem("access_token", data.access_token);
+        window.location.href = `/dashboard`;
+      } else {
+        setError(data?.detail || "Google login failed.");
+      }
+    } catch (err: any) {
+      if (err.response) {
+        setError(
+          err.response.data?.detail || `Server error: ${err.response.status}`,
+        );
+      } else if (err.request) {
+        setError("No response from server. Is FastAPI running?");
+      } else {
+        setError(`Error: ${err.message}`);
+      }
+    } finally {
+      setGoogleLoading(false);
+    }
+  }
+  function handleGoogleLogin() {
+    if ((window as any).google) {
+      (window as any).google.accounts.id.initialize({
+        client_id: process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID!,
+        callback: handleGoogleCallback,
+      });
+      (window as any).google.accounts.id.prompt();
+    } else {
+      setError("Google SDK not loaded. Please refresh.");
+    }
+  }
+
+  // --- Handlers ---
+  async function handleRegister(e: React.FormEvent) {
+    e.preventDefault();
+    setLoading(true);
+    setError("");
+
+    const trimmedEmail = email.trim();
+    const trimmedCompanyName = companyName.trim();
+    const cleanSubdomain = subdomain.trim().replace(/^-+|-+$/g, ""); // strip trailing/leading hyphens
+
+    if (!cleanSubdomain) {
+      setError("Please enter a valid subdomain.");
+      setLoading(false);
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/auth/register`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: trimmedEmail,
+          password,
+          company_name: trimmedCompanyName,
+          subdomain: cleanSubdomain,
+          // plan_id omitted from request body as requested
+        }),
+      });
+
+      const res = await parseResponseData(response);
+
+      if (response.ok && res && res.message) {
+        setShowOtp(true);
+      } else {
+        setError(
+          res?.detail || "Registration failed. Please check your credentials.",
+        );
+      }
+    } catch (err) {
+      setError(
+        "Failed to connect to the server. Is FastAPI running on api.localhost:8000?",
+      );
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleVerify() {
+    setLoading(true);
+    setError("");
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/auth/verify`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include", // Essential for receiving secure cookies
+        body: JSON.stringify({
+          email: email.trim(),
+          otp_code: otpCode,
+        }),
+      });
+
+      const res = await parseResponseData(response);
+
+      if (response.ok && res && res.access_token) {
+        // TODO: Migrate this to secure in-memory context state in the next step
+        localStorage.setItem("access_token", res.access_token);
+
+        // Redirect the user to their newly created tenant subdomain workspace
+        const cleanSubdomain = subdomain.trim().replace(/^-+|-+$/g, "");
+        window.location.href = `http://${cleanSubdomain}.localhost:3000/dashboard`;
+      } else {
+        setError(res?.detail || "Verification failed. Invalid OTP.");
+      }
+    } catch (err) {
+      setError("Failed to connect to the verification service.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleGoogleSetup() {
+    setLoading(true);
+    setError("");
+
+    const cleanSubdomain = googleSubdomain
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9-]/g, "");
+
+    try {
+      const res = await api.post("/auth/google/setup", {
+        setup_token: setupToken,
+        subdomain: cleanSubdomain,
+        company_name: googleCompanyName.trim(),
+      });
+
+      const data = res.data;
+
+      if (data?.access_token) {
+        localStorage.setItem("access_token", data.access_token);
+        window.location.href = `http://${cleanSubdomain}.localhost:3000/dashboard`;
+      } else {
+        setError(data?.detail || "Setup failed.");
+      }
+    } catch (err: any) {
+      if (err.response) {
+        setError(
+          err.response.data?.detail || `Server error: ${err.response.status}`,
+        );
+      } else if (err.request) {
+        setError("No response from server.");
+      } else {
+        setError(`Error: ${err.message}`);
+      }
+    } finally {
+      setLoading(false);
+    }
+  }
   return (
-    <main className="min-h-screen bg-slate-950 text-white flex">
-
+    <main className="min-h-screen bg-slate-950 text-white flex relative">
       {/* Left Side */}
-
       <section className="hidden lg:flex lg:w-1/2 border-r border-slate-800 p-12 flex-col justify-between">
-
         <div>
-          <h1 className="text-3xl font-bold">
-            Assistly
-          </h1>
+          <h1 className="text-3xl font-bold">Assistly</h1>
         </div>
-
         <div>
           <h2 className="text-5xl font-bold leading-tight">
-            The fastest AI workspace
-            for technical teams.
+            The fastest AI workspace for technical teams.
           </h2>
-
           <p className="mt-6 text-slate-400">
-            Join hundreds of teams optimizing
-            AI workflows with Assistly.
+            Join hundreds of teams optimizing AI workflows with Assistly.
           </p>
         </div>
-
         <div className="grid grid-cols-2 gap-6">
           <div>
-            <p className="text-indigo-400 font-mono">
-              1.2ms
-            </p>
-            <p className="text-slate-400 text-sm">
-              Latent Response
-            </p>
+            <p className="text-indigo-400 font-mono">1.2ms</p>
+            <p className="text-slate-400 text-sm">Latent Response</p>
           </div>
-
           <div>
-            <p className="text-indigo-400 font-mono">
-              99.99%
-            </p>
-            <p className="text-slate-400 text-sm">
-              Uptime SLA
-            </p>
+            <p className="text-indigo-400 font-mono">99.99%</p>
+            <p className="text-slate-400 text-sm">Uptime SLA</p>
           </div>
         </div>
-
       </section>
 
       {/* Right Side */}
-
       <section className="w-full lg:w-1/2 flex items-center justify-center p-6">
-
         <div className="w-full max-w-md">
-
-          <h2 className="text-3xl font-bold mb-2">
-            Create your workspace
-          </h2>
-
+          <h2 className="text-3xl font-bold mb-2">Create your workspace</h2>
           <p className="text-slate-400 mb-8">
             Join 500+ teams optimizing their AI workflows.
           </p>
 
-          <form className="space-y-5">
+          {/* Error Message Display */}
+          {error && !showOtp && (
+            <div className="mb-6 p-4 bg-red-500/10 border border-red-500/50 rounded-lg text-red-400 text-sm">
+              {error}
+            </div>
+          )}
 
+          {/* Google Register */}
+          <button
+            type="button"
+            onClick={handleGoogleLogin}
+            disabled={googleLoading}
+            className="w-full border border-slate-700 rounded-lg py-3 mb-6 hover:bg-slate-800 transition flex items-center justify-center gap-3 disabled:opacity-50"
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24">
+              <path
+                fill="#4285F4"
+                d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
+              />
+              <path
+                fill="#34A853"
+                d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
+              />
+              <path
+                fill="#FBBC05"
+                d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z"
+              />
+              <path
+                fill="#EA4335"
+                d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
+              />
+            </svg>
+            {googleLoading ? "Connecting..." : "Continue with Google"}
+          </button>
+
+          {/* Divider */}
+          <div className="flex items-center gap-4 mb-6">
+            <div className="h-px flex-1 bg-slate-700" />
+            <span className="text-xs text-slate-400 uppercase">Or Email</span>
+            <div className="h-px flex-1 bg-slate-700" />
+          </div>
+
+          <form onSubmit={handleRegister} className="space-y-5">
             <div>
-              <label className="block mb-2 text-sm">
-                Business Name
-              </label>
-
+              <label className="block mb-2 text-sm">Business Name</label>
               <input
                 type="text"
+                required
+                value={companyName}
+                onChange={(e) => setCompanyName(e.target.value)}
                 placeholder="Acme Corp"
-                className="w-full px-4 py-3 rounded-lg bg-slate-900 border border-slate-700"
+                className="w-full px-4 py-3 rounded-lg bg-slate-900 border border-slate-700 focus:outline-none focus:border-indigo-500"
               />
             </div>
 
             <div>
-              <label className="block mb-2 text-sm">
-                Workspace URL
-              </label>
-
+              <label className="block mb-2 text-sm">Workspace URL</label>
               <div className="flex">
                 <input
                   type="text"
+                  required
+                  value={subdomain}
+                  onChange={(e) =>
+                    setSubdomain(
+                      e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""),
+                    )
+                  }
                   placeholder="acme"
-                  className="flex-1 px-4 py-3 rounded-l-lg bg-slate-900 border border-slate-700"
+                  className="flex-1 px-4 py-3 rounded-l-lg bg-slate-900 border border-slate-700 focus:outline-none focus:border-indigo-500"
                 />
-
-                <div className="px-4 flex items-center bg-slate-800 rounded-r-lg border border-slate-700">
+                <div className="px-4 flex items-center bg-slate-800 rounded-r-lg border border-slate-700 text-slate-400">
                   .assistly.com
                 </div>
               </div>
             </div>
 
             <div>
-              <label className="block mb-2 text-sm">
-                Work Email
-              </label>
-
+              <label className="block mb-2 text-sm">Work Email</label>
               <input
                 type="email"
+                required
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
                 placeholder="name@company.com"
-                className="w-full px-4 py-3 rounded-lg bg-slate-900 border border-slate-700"
+                className="w-full px-4 py-3 rounded-lg bg-slate-900 border border-slate-700 focus:outline-none focus:border-indigo-500"
               />
             </div>
 
             <div>
-              <label className="block mb-2 text-sm">
-                Password
-              </label>
-
+              <label className="block mb-2 text-sm">Password</label>
               <input
                 type="password"
+                required
+                minLength={8}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
                 placeholder="********"
-                className="w-full px-4 py-3 rounded-lg bg-slate-900 border border-slate-700"
+                className="w-full px-4 py-3 rounded-lg bg-slate-900 border border-slate-700 focus:outline-none focus:border-indigo-500"
               />
             </div>
 
-            {/* Plan */}
-
             <div>
-              <label className="block mb-3 text-sm">
-                Select Plan
-              </label>
-
+              <label className="block mb-3 text-sm">Select Plan</label>
               <div className="grid grid-cols-3 gap-2">
-
-                <button
-                  type="button"
-                  onClick={() => setPlan("trial")}
-                  className={`p-3 rounded-lg ${
-                    plan === "trial"
-                      ? "bg-indigo-600"
-                      : "bg-slate-800"
-                  }`}
-                >
-                  Trial
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setPlan("starter")}
-                  className={`p-3 rounded-lg ${
-                    plan === "starter"
-                      ? "bg-indigo-600"
-                      : "bg-slate-800"
-                  }`}
-                >
-                  Starter
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setPlan("growth")}
-                  className={`p-3 rounded-lg ${
-                    plan === "growth"
-                      ? "bg-indigo-600"
-                      : "bg-slate-800"
-                  }`}
-                >
-                  Growth
-                </button>
-
+                {["trial", "starter", "growth"].map((item) => (
+                  <button
+                    key={item}
+                    type="button"
+                    onClick={() => setPlan(item)}
+                    className={`p-3 rounded-lg capitalize transition-colors ${
+                      plan === item
+                        ? "bg-indigo-600 text-white"
+                        : "bg-slate-800 text-slate-400 hover:bg-slate-700"
+                    }`}
+                  >
+                    {item}
+                  </button>
+                ))}
               </div>
             </div>
 
             <button
               type="submit"
-              className="w-full bg-indigo-600 py-3 rounded-lg font-semibold"
+              disabled={loading}
+              className="w-full bg-indigo-600 hover:bg-indigo-700 py-3 rounded-lg font-semibold transition-colors disabled:opacity-50"
             >
-              Create Workspace
+              {loading ? "Creating..." : "Create Workspace"}
             </button>
-
           </form>
-
         </div>
-
       </section>
 
+      {/* OTP Verification Modal */}
+      {showOtp && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-900 p-8 rounded-xl w-full max-w-sm border border-slate-800 shadow-2xl">
+            <h3 className="text-2xl font-bold mb-2">Check your email</h3>
+            <p className="text-slate-400 mb-6 text-sm">
+              Enter the 6-digit OTP sent to{" "}
+              <span className="text-white font-medium">{email}</span>
+            </p>
+
+            <input
+              type="text"
+              maxLength={6}
+              value={otpCode}
+              onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, ""))} // Numbers only
+              placeholder="000000"
+              className="w-full px-4 py-4 rounded-lg bg-slate-950 border border-slate-700 text-center text-3xl tracking-[0.5em] font-mono mb-4 focus:outline-none focus:border-indigo-500"
+            />
+
+            {error && (
+              <p className="text-red-400 text-sm mb-4 text-center">{error}</p>
+            )}
+
+            <button
+              onClick={handleVerify}
+              disabled={loading || otpCode.length !== 6}
+              className="w-full bg-indigo-600 hover:bg-indigo-700 py-3 rounded-lg font-semibold transition-colors disabled:opacity-50"
+            >
+              {loading ? "Verifying..." : "Verify OTP"}
+            </button>
+
+            <button
+              onClick={() => {
+                setShowOtp(false);
+                setError(""); // Clear context error when closing
+              }}
+              className="w-full mt-4 text-slate-400 hover:text-white text-sm"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Google Setup Modal */}
+      {showGoogleSetup && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-900 p-8 rounded-xl w-full max-w-sm border border-slate-800 shadow-2xl">
+            <h3 className="text-2xl font-bold mb-2">Almost there!</h3>
+            <p className="text-slate-400 mb-6 text-sm">
+              Set up your workspace to continue.
+            </p>
+
+            <div className="mb-4">
+              <label className="block mb-2 text-sm">Business Name</label>
+              <input
+                type="text"
+                value={googleCompanyName}
+                onChange={(e) => setGoogleCompanyName(e.target.value)}
+                placeholder="Acme Corp"
+                className="w-full px-4 py-3 rounded-lg bg-slate-950 border border-slate-700 focus:outline-none focus:border-indigo-500"
+              />
+            </div>
+
+            <div className="mb-4">
+              <label className="block mb-2 text-sm">Workspace URL</label>
+              <div className="flex">
+                <input
+                  type="text"
+                  value={googleSubdomain}
+                  onChange={(e) =>
+                    setGoogleSubdomain(
+                      e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""),
+                    )
+                  }
+                  placeholder="acme"
+                  className="flex-1 px-4 py-3 rounded-l-lg bg-slate-950 border border-slate-700 focus:outline-none focus:border-indigo-500"
+                />
+                <div className="px-4 flex items-center bg-slate-800 rounded-r-lg border border-slate-700 text-slate-400">
+                  .assistly.com
+                </div>
+              </div>
+            </div>
+
+            {error && (
+              <p className="text-red-400 text-sm mb-4 text-center">{error}</p>
+            )}
+
+            <button
+              onClick={handleGoogleSetup}
+              disabled={loading || !googleSubdomain || !googleCompanyName}
+              className="w-full bg-indigo-600 hover:bg-indigo-700 py-3 rounded-lg font-semibold transition-colors disabled:opacity-50"
+            >
+              {loading ? "Setting up..." : "Create Workspace"}
+            </button>
+
+            <button
+              onClick={() => {
+                setShowGoogleSetup(false);
+                setError("");
+              }}
+              className="w-full mt-4 text-slate-400 hover:text-white text-sm"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
     </main>
   );
 }
