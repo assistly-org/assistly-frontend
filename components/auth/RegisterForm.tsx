@@ -1,40 +1,53 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { api } from "@/lib/api";
+import { getTenantSlugFromToken } from "@/lib/auth";
 
-import { api } from "@/lib/api/client";
 export default function RegisterPage() {
-  // --- States ---
+  // --- Form States ---
   const [plan, setPlan] = useState("trial");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [companyName, setCompanyName] = useState("");
   const [subdomain, setSubdomain] = useState("");
 
-  const [otpCode, setOtpCode] = useState("");
-  const [showOtp, setShowOtp] = useState(false);
+  // --- UI & Error States ---
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
+  // --- OTP States ---
+  const [otpCode, setOtpCode] = useState("");
+  const [showOtp, setShowOtp] = useState(false);
+
+  // --- Google Auth States ---
   const [showGoogleSetup, setShowGoogleSetup] = useState(false);
   const [setupToken, setSetupToken] = useState("");
   const [googleSubdomain, setGoogleSubdomain] = useState("");
   const [googleCompanyName, setGoogleCompanyName] = useState("");
-
   const [googleLoading, setGoogleLoading] = useState(false);
 
-  // Pointing to api.localhost:8000 is necessary to route to assistly_auth schema
-  const API_BASE_URL = "http://api.localhost:8000";
+  // Check if already logged in
+  useEffect(() => {
+    const token = localStorage.getItem("access_token");
 
-  // Safely parses JSON error responses without crashing on non-JSON payloads
-  async function parseResponseData(response: Response) {
-    const contentType = response.headers.get("content-type");
-    if (contentType && contentType.includes("application/json")) {
-      return await response.json();
+    if (!token) return;
+
+    try {
+      const tenantSlug = getTenantSlugFromToken(token);
+
+      if (tenantSlug) {
+        window.location.replace(`http://${tenantSlug}.localhost:3000/dashboard`);
+        return;
+      }
+    } catch (error) {
+      console.error("Token parsing error:", error);
     }
-    return null;
-  }
 
+    window.location.replace("/dashboard");
+  }, []);
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   async function handleGoogleCallback(response: any) {
     setGoogleLoading(true);
     setError("");
@@ -51,114 +64,55 @@ export default function RegisterPage() {
         setShowGoogleSetup(true);
       } else if (data?.access_token) {
         localStorage.setItem("access_token", data.access_token);
-        window.location.href = `/dashboard`;
+        
+        const tenantSlug = getTenantSlugFromToken(data.access_token);
+
+        if (tenantSlug) {
+          window.location.href = `http://${tenantSlug}.localhost:3000/dashboard`;
+        } else {
+          window.location.href = "/dashboard";
+        }
       } else {
         setError(data?.detail || "Google login failed.");
       }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (err: any) {
-      if (err.response) {
-        setError(
-          err.response.data?.detail || `Server error: ${err.response.status}`,
-        );
-      } else if (err.request) {
-        setError("No response from server. Is FastAPI running?");
-      } else {
-        setError(`Error: ${err.message}`);
-      }
+      setError(
+        err.response?.data?.detail || "Failed to connect to the server.",
+      );
     } finally {
       setGoogleLoading(false);
     }
   }
-  function handleGoogleLogin() {
-    if ((window as any).google) {
-      (window as any).google.accounts.id.initialize({
-        client_id: process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID!,
-        callback: handleGoogleCallback,
-      });
-      (window as any).google.accounts.id.prompt();
-    } else {
-      setError("Google SDK not loaded. Please refresh.");
-    }
-  }
+
+  // --- Initialize Google SDK ---
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const interval = setInterval(() => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const w = window as any;
+      if (w.google?.accounts?.id) {
+        w.google.accounts.id.initialize({
+          client_id: process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID!,
+          callback: handleGoogleCallback,
+        });
+        clearInterval(interval);
+      }
+    }, 100);
+
+    return () => clearInterval(interval);
+  }, []);
 
   // --- Handlers ---
-  async function handleRegister(e: React.FormEvent) {
-    e.preventDefault();
-    setLoading(true);
-    setError("");
 
-    const trimmedEmail = email.trim();
-    const trimmedCompanyName = companyName.trim();
-    const cleanSubdomain = subdomain.trim().replace(/^-+|-+$/g, ""); // strip trailing/leading hyphens
-
-    if (!cleanSubdomain) {
-      setError("Please enter a valid subdomain.");
-      setLoading(false);
-      return;
-    }
-
-    try {
-      const response = await fetch(`${API_BASE_URL}/auth/register`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          email: trimmedEmail,
-          password,
-          company_name: trimmedCompanyName,
-          subdomain: cleanSubdomain,
-          // plan_id omitted from request body as requested
-        }),
-      });
-
-      const res = await parseResponseData(response);
-
-      if (response.ok && res && res.message) {
-        setShowOtp(true);
-      } else {
-        setError(
-          res?.detail || "Registration failed. Please check your credentials.",
-        );
-      }
-    } catch (err) {
-      setError(
-        "Failed to connect to the server. Is FastAPI running on api.localhost:8000?",
-      );
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function handleVerify() {
-    setLoading(true);
-    setError("");
-
-    try {
-      const response = await fetch(`${API_BASE_URL}/auth/verify`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include", // Essential for receiving secure cookies
-        body: JSON.stringify({
-          email: email.trim(),
-          otp_code: otpCode,
-        }),
-      });
-
-      const res = await parseResponseData(response);
-
-      if (response.ok && res && res.access_token) {
-        // TODO: Migrate this to secure in-memory context state in the next step
-        localStorage.setItem("access_token", res.access_token);
-
-        // Redirect the user to their newly created tenant subdomain workspace
-        const cleanSubdomain = subdomain.trim().replace(/^-+|-+$/g, "");
-        window.location.href = `http://${cleanSubdomain}.localhost:3000/dashboard`;
-      } else {
-        setError(res?.detail || "Verification failed. Invalid OTP.");
-      }
-    } catch (err) {
-      setError("Failed to connect to the verification service.");
-    } finally {
-      setLoading(false);
+  function handleGoogleLogin() {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const w = window as any;
+    if (w.google?.accounts?.id) {
+      w.google.accounts.id.prompt();
+    } else {
+      setError("Google SDK is still loading. Please try again in a moment.");
     }
   }
 
@@ -182,24 +136,105 @@ export default function RegisterPage() {
 
       if (data?.access_token) {
         localStorage.setItem("access_token", data.access_token);
-        window.location.href = `http://${cleanSubdomain}.localhost:3000/dashboard`;
+
+        const tenantSlug = getTenantSlugFromToken(data.access_token);
+
+        if (tenantSlug) {
+          window.location.href = `http://${tenantSlug}.localhost:3000/dashboard`;
+        } else {
+          window.location.href = "/dashboard";
+        }
       } else {
         setError(data?.detail || "Setup failed.");
       }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (err: any) {
-      if (err.response) {
-        setError(
-          err.response.data?.detail || `Server error: ${err.response.status}`,
-        );
-      } else if (err.request) {
-        setError("No response from server.");
-      } else {
-        setError(`Error: ${err.message}`);
-      }
+      setError(
+        err.response?.data?.detail || "Failed to complete workspace setup.",
+      );
     } finally {
       setLoading(false);
     }
   }
+
+  async function handleRegister(e: React.FormEvent) {
+    e.preventDefault();
+    setLoading(true);
+    setError("");
+
+    const trimmedEmail = email.trim();
+    const trimmedCompanyName = companyName.trim();
+    const cleanSubdomain = subdomain
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9-]/g, "");
+
+    if (!cleanSubdomain) {
+      setError("Please enter a valid subdomain.");
+      setLoading(false);
+      return;
+    }
+
+    try {
+      const response = await api.post("/auth/register", {
+        email: trimmedEmail,
+        password,
+        company_name: trimmedCompanyName,
+        subdomain: cleanSubdomain,
+        plan_id: plan, 
+      });
+
+      if (response.data?.message) {
+        setShowOtp(true);
+      } else {
+        setError(
+          response.data?.detail ||
+            "Registration failed. Please check your details.",
+        );
+      }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } catch (err: any) {
+      setError(
+        err.response?.data?.detail || "Failed to connect to the server.",
+      );
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleVerify() {
+    setLoading(true);
+    setError("");
+
+    try {
+      const response = await api.post("/auth/verify", {
+        email: email.trim(),
+        otp_code: otpCode,
+      });
+
+      const data = response.data;
+
+      if (data?.access_token) {
+        localStorage.setItem("access_token", data.access_token);
+
+        const tenantSlug = getTenantSlugFromToken(data.access_token);
+
+        if (tenantSlug) {
+          window.location.href = `http://${tenantSlug}.localhost:3000/dashboard`;
+        } else {
+          window.location.href = "/dashboard";
+        }
+      } else {
+        setError(data?.detail || "Verification failed. Invalid OTP.");
+      }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } catch (err: any) {
+      setError(err.response?.data?.detail || "Failed to verify OTP.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
   return (
     <main className="min-h-screen bg-slate-950 text-white flex relative">
       {/* Left Side */}
@@ -236,7 +271,7 @@ export default function RegisterPage() {
           </p>
 
           {/* Error Message Display */}
-          {error && !showOtp && (
+          {error && !showOtp && !showGoogleSetup && (
             <div className="mb-6 p-4 bg-red-500/10 border border-red-500/50 rounded-lg text-red-400 text-sm">
               {error}
             </div>
@@ -272,26 +307,32 @@ export default function RegisterPage() {
 
           {/* Divider */}
           <div className="flex items-center gap-4 mb-6">
-            <div className="h-px flex-1 bg-slate-700" />
-            <span className="text-xs text-slate-400 uppercase">Or Email</span>
-            <div className="h-px flex-1 bg-slate-700" />
+            <div className="h-px flex-1 bg-slate-800" />
+            <span className="text-xs text-slate-500 uppercase font-semibold tracking-wider">
+              Or Email
+            </span>
+            <div className="h-px flex-1 bg-slate-800" />
           </div>
 
           <form onSubmit={handleRegister} className="space-y-5">
             <div>
-              <label className="block mb-2 text-sm">Business Name</label>
+              <label className="block mb-2 text-sm text-slate-300">
+                Business Name
+              </label>
               <input
                 type="text"
                 required
                 value={companyName}
                 onChange={(e) => setCompanyName(e.target.value)}
                 placeholder="Acme Corp"
-                className="w-full px-4 py-3 rounded-lg bg-slate-900 border border-slate-700 focus:outline-none focus:border-indigo-500"
+                className="w-full px-4 py-3 rounded-lg bg-slate-900 border border-slate-800 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all placeholder:text-slate-600"
               />
             </div>
 
             <div>
-              <label className="block mb-2 text-sm">Workspace URL</label>
+              <label className="block mb-2 text-sm text-slate-300">
+                Workspace URL
+              </label>
               <div className="flex">
                 <input
                   type="text"
@@ -303,51 +344,57 @@ export default function RegisterPage() {
                     )
                   }
                   placeholder="acme"
-                  className="flex-1 px-4 py-3 rounded-l-lg bg-slate-900 border border-slate-700 focus:outline-none focus:border-indigo-500"
+                  className="flex-1 px-4 py-3 rounded-l-lg bg-slate-900 border border-r-0 border-slate-800 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all placeholder:text-slate-600"
                 />
-                <div className="px-4 flex items-center bg-slate-800 rounded-r-lg border border-slate-700 text-slate-400">
+                <div className="px-4 flex items-center bg-slate-800/50 rounded-r-lg border border-l-0 border-slate-800 text-slate-500">
                   .assistly.com
                 </div>
               </div>
             </div>
 
             <div>
-              <label className="block mb-2 text-sm">Work Email</label>
+              <label className="block mb-2 text-sm text-slate-300">
+                Work Email
+              </label>
               <input
                 type="email"
                 required
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="name@company.com"
-                className="w-full px-4 py-3 rounded-lg bg-slate-900 border border-slate-700 focus:outline-none focus:border-indigo-500"
+                className="w-full px-4 py-3 rounded-lg bg-slate-900 border border-slate-800 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all placeholder:text-slate-600"
               />
             </div>
 
             <div>
-              <label className="block mb-2 text-sm">Password</label>
+              <label className="block mb-2 text-sm text-slate-300">
+                Password
+              </label>
               <input
                 type="password"
                 required
                 minLength={8}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                placeholder="********"
-                className="w-full px-4 py-3 rounded-lg bg-slate-900 border border-slate-700 focus:outline-none focus:border-indigo-500"
+                placeholder="••••••••"
+                className="w-full px-4 py-3 rounded-lg bg-slate-900 border border-slate-800 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all placeholder:text-slate-600"
               />
             </div>
 
             <div>
-              <label className="block mb-3 text-sm">Select Plan</label>
-              <div className="grid grid-cols-3 gap-2">
+              <label className="block mb-3 text-sm text-slate-300">
+                Select Plan
+              </label>
+              <div className="grid grid-cols-3 gap-3">
                 {["trial", "starter", "growth"].map((item) => (
                   <button
                     key={item}
                     type="button"
                     onClick={() => setPlan(item)}
-                    className={`p-3 rounded-lg capitalize transition-colors ${
+                    className={`p-3 rounded-lg capitalize transition-all duration-200 font-medium ${
                       plan === item
-                        ? "bg-indigo-600 text-white"
-                        : "bg-slate-800 text-slate-400 hover:bg-slate-700"
+                        ? "bg-indigo-600 text-white shadow-lg shadow-indigo-500/25 border border-indigo-500"
+                        : "bg-slate-900/50 text-slate-400 border border-slate-800 hover:bg-slate-800 hover:text-slate-300"
                     }`}
                   >
                     {item}
@@ -359,9 +406,9 @@ export default function RegisterPage() {
             <button
               type="submit"
               disabled={loading}
-              className="w-full bg-indigo-600 hover:bg-indigo-700 py-3 rounded-lg font-semibold transition-colors disabled:opacity-50"
+              className="w-full bg-indigo-600 hover:bg-indigo-500 py-3 mt-4 rounded-lg font-semibold transition-all shadow-lg shadow-indigo-500/25 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {loading ? "Creating..." : "Create Workspace"}
+              {loading ? "Creating Workspace..." : "Create Workspace"}
             </button>
           </form>
         </div>
@@ -369,8 +416,8 @@ export default function RegisterPage() {
 
       {/* OTP Verification Modal */}
       {showOtp && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-slate-900 p-8 rounded-xl w-full max-w-sm border border-slate-800 shadow-2xl">
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in duration-200">
+          <div className="bg-slate-900 p-8 rounded-2xl w-full max-w-sm border border-slate-800 shadow-2xl">
             <h3 className="text-2xl font-bold mb-2">Check your email</h3>
             <p className="text-slate-400 mb-6 text-sm">
               Enter the 6-digit OTP sent to{" "}
@@ -381,19 +428,21 @@ export default function RegisterPage() {
               type="text"
               maxLength={6}
               value={otpCode}
-              onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, ""))} // Numbers only
+              onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, ""))}
               placeholder="000000"
-              className="w-full px-4 py-4 rounded-lg bg-slate-950 border border-slate-700 text-center text-3xl tracking-[0.5em] font-mono mb-4 focus:outline-none focus:border-indigo-500"
+              className="w-full px-4 py-4 rounded-xl bg-slate-950 border border-slate-800 text-center text-3xl tracking-[0.5em] font-mono mb-4 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all placeholder:text-slate-800 text-white"
             />
 
             {error && (
-              <p className="text-red-400 text-sm mb-4 text-center">{error}</p>
+              <p className="text-red-400 text-sm mb-4 text-center bg-red-400/10 py-2 rounded-lg">
+                {error}
+              </p>
             )}
 
             <button
               onClick={handleVerify}
               disabled={loading || otpCode.length !== 6}
-              className="w-full bg-indigo-600 hover:bg-indigo-700 py-3 rounded-lg font-semibold transition-colors disabled:opacity-50"
+              className="w-full bg-indigo-600 hover:bg-indigo-500 py-3 rounded-lg font-semibold transition-all shadow-lg shadow-indigo-500/25 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {loading ? "Verifying..." : "Verify OTP"}
             </button>
@@ -401,9 +450,9 @@ export default function RegisterPage() {
             <button
               onClick={() => {
                 setShowOtp(false);
-                setError(""); // Clear context error when closing
+                setError("");
               }}
-              className="w-full mt-4 text-slate-400 hover:text-white text-sm"
+              className="w-full mt-4 text-slate-500 hover:text-slate-300 transition-colors text-sm font-medium"
             >
               Cancel
             </button>
@@ -413,26 +462,30 @@ export default function RegisterPage() {
 
       {/* Google Setup Modal */}
       {showGoogleSetup && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-slate-900 p-8 rounded-xl w-full max-w-sm border border-slate-800 shadow-2xl">
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in duration-200">
+          <div className="bg-slate-900 p-8 rounded-2xl w-full max-w-sm border border-slate-800 shadow-2xl">
             <h3 className="text-2xl font-bold mb-2">Almost there!</h3>
             <p className="text-slate-400 mb-6 text-sm">
               Set up your workspace to continue.
             </p>
 
-            <div className="mb-4">
-              <label className="block mb-2 text-sm">Business Name</label>
+            <div className="mb-5">
+              <label className="block mb-2 text-sm text-slate-300">
+                Business Name
+              </label>
               <input
                 type="text"
                 value={googleCompanyName}
                 onChange={(e) => setGoogleCompanyName(e.target.value)}
                 placeholder="Acme Corp"
-                className="w-full px-4 py-3 rounded-lg bg-slate-950 border border-slate-700 focus:outline-none focus:border-indigo-500"
+                className="w-full px-4 py-3 rounded-lg bg-slate-950 border border-slate-800 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all placeholder:text-slate-700"
               />
             </div>
 
-            <div className="mb-4">
-              <label className="block mb-2 text-sm">Workspace URL</label>
+            <div className="mb-6">
+              <label className="block mb-2 text-sm text-slate-300">
+                Workspace URL
+              </label>
               <div className="flex">
                 <input
                   type="text"
@@ -443,22 +496,24 @@ export default function RegisterPage() {
                     )
                   }
                   placeholder="acme"
-                  className="flex-1 px-4 py-3 rounded-l-lg bg-slate-950 border border-slate-700 focus:outline-none focus:border-indigo-500"
+                  className="flex-1 px-4 py-3 rounded-l-lg bg-slate-950 border border-r-0 border-slate-800 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all placeholder:text-slate-700"
                 />
-                <div className="px-4 flex items-center bg-slate-800 rounded-r-lg border border-slate-700 text-slate-400">
+                <div className="px-4 flex items-center bg-slate-800/50 rounded-r-lg border border-l-0 border-slate-800 text-slate-500">
                   .assistly.com
                 </div>
               </div>
             </div>
 
             {error && (
-              <p className="text-red-400 text-sm mb-4 text-center">{error}</p>
+              <p className="text-red-400 text-sm mb-4 text-center bg-red-400/10 py-2 rounded-lg">
+                {error}
+              </p>
             )}
 
             <button
               onClick={handleGoogleSetup}
               disabled={loading || !googleSubdomain || !googleCompanyName}
-              className="w-full bg-indigo-600 hover:bg-indigo-700 py-3 rounded-lg font-semibold transition-colors disabled:opacity-50"
+              className="w-full bg-indigo-600 hover:bg-indigo-500 py-3 rounded-lg font-semibold transition-all shadow-lg shadow-indigo-500/25 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {loading ? "Setting up..." : "Create Workspace"}
             </button>
@@ -468,7 +523,7 @@ export default function RegisterPage() {
                 setShowGoogleSetup(false);
                 setError("");
               }}
-              className="w-full mt-4 text-slate-400 hover:text-white text-sm"
+              className="w-full mt-4 text-slate-500 hover:text-slate-300 transition-colors text-sm font-medium"
             >
               Cancel
             </button>
