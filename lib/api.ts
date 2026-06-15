@@ -42,7 +42,7 @@ api.interceptors.response.use((response) => {
         try {
             // ⚡ Hit the backend refresh route we built!
             // The browser will automatically send the HTTP-Only cookie with this request.
-            const refreshResponse = await api.post('/auth/refresh');
+            const refreshResponse = await api.post('/refresh');
 
             // Grab the brand new access token
             const newAccessToken = refreshResponse.data.access_token;
@@ -64,7 +64,7 @@ api.interceptors.response.use((response) => {
             if (typeof window !== 'undefined') {
                 localStorage.removeItem('access_token');
                 localStorage.removeItem('user');
-                window.location.href = '/auth/login';
+                window.location.href = '/login';
             }
             return Promise.reject(refreshError);
         }

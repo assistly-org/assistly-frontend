@@ -2,66 +2,55 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
-import { getTenantSlugFromToken } from "@/lib/auth";
+
+declare global {
+  interface Window {
+    google: any;
+  }
+}
 
 export default function LoginForm() {
-  const router = useRouter();
-
+  // --- Email Login States ---
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
 
+  // --- Global UI States ---
+  const [error, setError] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
+
+  // --- Google Auth States ---
   const [showGoogleSetup, setShowGoogleSetup] = useState(false);
   const [setupToken, setSetupToken] = useState("");
   const [googleSubdomain, setGoogleSubdomain] = useState("");
   const [googleCompanyName, setGoogleCompanyName] = useState("");
+  const [googleLoading, setGoogleLoading] = useState(false);
 
-  // Check if already logged in
-  useEffect(() => {
-    const token = localStorage.getItem("access_token");
+  // --- Check if already logged in ---
+  // useEffect(() => {
+  //   const token = localStorage.getItem("access_token");
+  //   if (!token) return;
 
-    if (!token) return;
+  //   try {
+  //     const payload = JSON.parse(atob(token.split(".")[1]));
+  //     const now = Math.floor(Date.now() / 1000);
 
-    try {
-      const tenantSlug = getTenantSlugFromToken(token);
+  //     if (payload.exp && payload.exp < now) {
+  //       localStorage.removeItem("access_token");
+  //       return;
+  //     }
 
-      if (tenantSlug) {
-        window.location.replace(`http://${tenantSlug}.localhost:3000/dashboard`);
-        return;
-      }
-    } catch (error) {
-      console.error("Token parsing error:", error);
-    }
+  //     // If valid token exists, send them to select their organization
+  //     window.location.replace("/organizations");
+  //   } catch (error) {
+  //     localStorage.removeItem("access_token");
+  //   }
+  // }, []);
 
-    window.location.replace("/dashboard");
-  }, []);
-
-  // --- Google OAuth Setup ---
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-
-    const interval = setInterval(() => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const w = window as any;
-      if (w.google) {
-        w.google.accounts.id.initialize({
-          client_id: process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID!,
-          callback: handleGoogleCallback,
-        });
-        clearInterval(interval);
-      }
-    }, 100);
-
-    return () => clearInterval(interval);
-  }, []);
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  async function handleGoogleCallback(response: any) {
-    setLoading(true);
+  // --- Google Handlers ---
+  const handleGoogleCallback = async (response: { credential: string }) => {
+    setGoogleLoading(true);
     setError("");
 
     try {
@@ -76,29 +65,46 @@ export default function LoginForm() {
         setShowGoogleSetup(true);
       } else if (data?.access_token) {
         localStorage.setItem("access_token", data.access_token);
-        
-        const tenantSlug = getTenantSlugFromToken(data.access_token);
-
-        if (tenantSlug) {
-          window.location.href = `http://${tenantSlug}.localhost:3000/dashboard`;
-        } else {
-          router.push("/dashboard");
-        }
+        // Instantly route to organizations page
+        window.location.replace("/organizations");
       } else {
         setError(data?.detail || "Google login failed.");
       }
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (err: any) {
       setError(
-        err.response?.data?.detail || "Failed to connect to the server."
+        err.response?.data?.detail || "Failed to connect to the server.",
       );
     } finally {
-      setLoading(false);
+      setGoogleLoading(false);
     }
-  }
+  };
+  // --- Initialize Google SDK ---
+  useEffect(() => {
+    if (typeof window === "undefined") return;
 
-  async function handleGoogleSetup() {
-    setLoading(true);
+    const interval = setInterval(() => {
+      if (window.google?.accounts?.id) {
+        window.google.accounts.id.initialize({
+          client_id: process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID!,
+          callback: handleGoogleCallback,
+        });
+        clearInterval(interval);
+      }
+    }, 100);
+
+    return () => clearInterval(interval);
+  }, []);
+  const handleGoogleLogin = () => {
+    if (window.google?.accounts?.id) {
+      window.google.accounts.id.prompt();
+    } else {
+      setError("Google SDK is still loading. Please try again in a moment.");
+    }
+  };
+
+  const handleGoogleSetup = async () => {
+    setIsLoading(true);
     setError("");
 
     const cleanSubdomain = googleSubdomain
@@ -117,58 +123,48 @@ export default function LoginForm() {
 
       if (data?.access_token) {
         localStorage.setItem("access_token", data.access_token);
-        window.location.href = `http://${cleanSubdomain}.localhost:3000/dashboard`;
+        // Instantly route to organizations page
+        window.location.replace("/organizations");
       } else {
         setError(data?.detail || "Setup failed.");
       }
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (err: any) {
       setError(
-        err.response?.data?.detail || "Failed to connect to the server."
+        err.response?.data?.detail || "Failed to complete workspace setup.",
       );
     } finally {
-      setLoading(false);
+      setIsLoading(false);
     }
-  }
+  };
 
-  function handleGoogleLogin() {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const w = window as any;
-    if (w.google) {
-      w.google.accounts.id.prompt();
-    } else {
-      setError("Google SDK not loaded. Please refresh.");
-    }
-  }
-
-  // --- Email Login ---
-  async function handleLogin(e: React.FormEvent) {
+  // --- Email Login Handler ---
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
-    setLoading(true);
+    setIsLoading(true);
 
     try {
-      const response = await api.post("/auth/login", { email, password });
-      const { access_token } = response.data;
+      const response = await api.post("/auth/login", {
+        email: email,
+        password: password,
+      });
 
+      const { access_token } = response.data;
       localStorage.setItem("access_token", access_token);
 
-      const tenantSlug = getTenantSlugFromToken(access_token);
+      // Instantly route to organizations page
+      window.location.replace("/organizations");
 
-      if (tenantSlug) {
-        window.location.href = `http://${tenantSlug}.localhost:3000/dashboard`;
-      } else {
-        router.push("/dashboard");
-      }
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (err: any) {
       setError(
-        err.response?.data?.detail || "Failed to connect to the server."
+        err.response?.data?.detail || "Failed to connect to the server.",
       );
     } finally {
-      setLoading(false);
+      setIsLoading(false);
     }
-  }
+  };
 
   return (
     <main className="min-h-screen bg-slate-950 text-slate-100 flex items-center justify-center p-6">
@@ -182,18 +178,11 @@ export default function LoginForm() {
           <p className="text-slate-400 text-sm mt-2">Enterprise Access</p>
         </div>
 
-        {/* Error */}
-        {error && (
-          <div className="mb-6 p-4 bg-red-500/10 border border-red-500/50 rounded-lg text-red-400 text-sm text-center">
-            {error}
-          </div>
-        )}
-
-        {/* Google Login */}
+        {/* Google Login Button */}
         <button
           type="button"
           onClick={handleGoogleLogin}
-          disabled={loading}
+          disabled={googleLoading}
           className="w-full border border-slate-700 rounded-lg py-3 mb-6 hover:bg-slate-800 transition flex items-center justify-center gap-3 disabled:opacity-50"
         >
           <svg width="20" height="20" viewBox="0 0 24 24">
@@ -214,7 +203,7 @@ export default function LoginForm() {
               d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
             />
           </svg>
-          {loading ? "Connecting..." : "Sign in with Google"}
+          {googleLoading ? "Connecting..." : "Sign in with Google"}
         </button>
 
         {/* Divider */}
@@ -226,13 +215,20 @@ export default function LoginForm() {
 
         {/* Form */}
         <form onSubmit={handleLogin} className="space-y-5">
+          {/* Error Message Display */}
+          {error && !showGoogleSetup && (
+            <div className="bg-red-500/10 border border-red-500/50 text-red-500 text-sm p-3 rounded-lg text-center">
+              {error}
+            </div>
+          )}
+
           <div>
             <label className="block mb-2 text-sm">Email Address</label>
             <input
               type="email"
-              required
               value={email}
               onChange={(e) => setEmail(e.target.value)}
+              required
               placeholder="name@company.com"
               className="w-full rounded-lg bg-slate-950 border border-slate-700 px-4 py-3 outline-none focus:border-indigo-500 transition-colors"
             />
@@ -248,14 +244,15 @@ export default function LoginForm() {
                 Forgot?
               </Link>
             </div>
+
             <div className="relative">
               <input
                 type={showPassword ? "text" : "password"}
-                required
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
+                required
                 placeholder="••••••••"
-                className="w-full rounded-lg bg-slate-950 border border-slate-700 px-4 py-3 outline-none focus:border-indigo-500 transition-colors pr-12"
+                className="w-full rounded-lg bg-slate-950 border border-slate-700 px-4 py-3 outline-none focus:border-indigo-500 transition-colors"
               />
               <button
                 type="button"
@@ -270,31 +267,28 @@ export default function LoginForm() {
           <div className="flex items-center gap-2">
             <input
               type="checkbox"
-              id="remember"
               className="rounded border-slate-700 bg-slate-950 accent-indigo-500"
             />
-            <label htmlFor="remember" className="text-sm text-slate-300">
-              Remember Me
-            </label>
+            <label className="text-sm text-slate-300">Remember Me</label>
           </div>
 
           <button
             type="submit"
-            disabled={loading}
+            disabled={isLoading}
             className={`w-full py-3 rounded-lg font-semibold transition-all ${
-              loading
+              isLoading
                 ? "bg-indigo-600/50 cursor-not-allowed"
                 : "bg-indigo-600 hover:bg-indigo-500 shadow-lg shadow-indigo-500/20"
             }`}
           >
-            {loading ? "Authenticating..." : "Sign In"}
+            {isLoading ? "Authenticating..." : "Sign In"}
           </button>
         </form>
 
         <p className="text-center mt-6 text-slate-400 text-sm">
-          Don't have an account?{" "}
+          Dont have an account?{" "}
           <Link
-            href="/auth/register"
+            href="/register"
             className="text-indigo-400 hover:text-indigo-300 font-medium transition-colors"
           >
             Join Assistly
@@ -330,11 +324,11 @@ export default function LoginForm() {
                   value={googleSubdomain}
                   onChange={(e) =>
                     setGoogleSubdomain(
-                      e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, "")
+                      e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""),
                     )
                   }
                   placeholder="acme"
-                  className="flex-1 px-4 py-3 rounded-l-lg bg-slate-950 border border-slate-700 focus:outline-none focus:border-indigo-500"
+                  className="flex-1 rounded-l-lg bg-slate-950 border border-slate-700 px-4 py-3 outline-none focus:border-indigo-500"
                 />
                 <div className="px-4 flex items-center bg-slate-800 rounded-r-lg border border-slate-700 text-slate-400">
                   .assistly.com
@@ -348,12 +342,11 @@ export default function LoginForm() {
 
             <button
               onClick={handleGoogleSetup}
-              disabled={loading || !googleSubdomain || !googleCompanyName}
+              disabled={isLoading || !googleSubdomain || !googleCompanyName}
               className="w-full bg-indigo-600 hover:bg-indigo-700 py-3 rounded-lg font-semibold transition-colors disabled:opacity-50"
             >
-              {loading ? "Setting up..." : "Create Workspace"}
+              {isLoading ? "Setting up..." : "Create Workspace"}
             </button>
-
             <button
               onClick={() => {
                 setShowGoogleSetup(false);

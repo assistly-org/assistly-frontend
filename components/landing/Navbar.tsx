@@ -14,10 +14,10 @@ export default function Navbar() {
         </div>
 
         <div className="flex items-center gap-4">
-          <Link href="/auth/login" className="text-slate-300 hover:text-white">
+          <Link href="/login" className="text-slate-300 hover:text-white">
             Sign In
           </Link>
-          <Link href="/auth/register">
+          <Link href="/register">
             <button className="bg-indigo-600 px-4 py-2 rounded-lg text-white font-semibold hover:bg-indigo-500">
               Get Started
             </button>
