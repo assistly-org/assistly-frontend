@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { api } from "@/lib/api";
 
@@ -33,6 +33,9 @@ export default function RegisterForm() {
   const [googleCompanyName, setGoogleCompanyName] = useState("");
   const [googleLoading, setGoogleLoading] = useState(false);
 
+  // ⚡ Refs for SDK and the Button Container
+  const isGoogleInitialized = useRef(false);
+  const googleButtonContainerRef = useRef<HTMLDivElement>(null);
 
   // --- Google Handlers ---
   const handleGoogleCallback = async (response: { credential: string }) => {
@@ -52,7 +55,12 @@ export default function RegisterForm() {
         setError(data?.detail || "Google registration failed.");
       }
     } catch (err: any) {
-      setError(err.response?.data?.detail || "Failed to connect to the server.");
+      const detail = err.response?.data?.detail;
+      if (Array.isArray(detail)) {
+        setError(`Validation Error: ${detail[0].msg}`);
+      } else {
+        setError(detail || "Failed to connect to the server.");
+      }
     } finally {
       setGoogleLoading(false);
     }
@@ -60,28 +68,47 @@ export default function RegisterForm() {
 
   // --- Initialize Google SDK ---
   useEffect(() => {
-    if (typeof window === "undefined") return;
+    if (typeof window === "undefined" || isGoogleInitialized.current) return;
 
     const interval = setInterval(() => {
       if (window.google?.accounts?.id) {
+        
         window.google.accounts.id.initialize({
           client_id: process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID!,
           callback: handleGoogleCallback,
+          auto_select: false,
+          cancel_on_tap_outside: false,
         });
+
+        window.google.accounts.id.cancel(); 
+
+        // ⚡ Render the exact same official Google button as the Login page
+        if (googleButtonContainerRef.current) {
+          const containerWidth = googleButtonContainerRef.current.offsetWidth || 300;
+          
+          window.google.accounts.id.renderButton(googleButtonContainerRef.current, { 
+            theme: "outline", 
+            size: "large", 
+            width: "100%" 
+          });
+        }
+
+        window.google.accounts.id.prompt((notification: any) => {
+          if (notification.isNotDisplayed() || notification.isSkippedMoment()) {
+            console.log("One Tap was blocked by browser or closed by user.");
+          }
+        });
+
+        isGoogleInitialized.current = true;
         clearInterval(interval);
       }
     }, 100);
 
     return () => clearInterval(interval);
   }, []);
-  const handleGoogleLogin = () => {
-    if (window.google?.accounts?.id) {
-      window.google.accounts.id.prompt();
-    } else {
-      setError("Google SDK is still loading. Please try again in a moment.");
-    }
-  };
 
+
+  
   const handleGoogleSetup = async () => {
     setIsLoading(true);
     setError("");
@@ -148,16 +175,18 @@ export default function RegisterForm() {
 
   return (
     <main className="min-h-screen bg-slate-950 text-slate-100 flex items-center justify-center p-6">
-      <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-xl p-8">
+      <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-xl p-8 shadow-2xl">
         <div className="text-center mb-8">
           <div className="w-12 h-12 bg-indigo-500 rounded-lg mx-auto mb-4 flex items-center justify-center text-xl">⚡</div>
           <h1 className="text-2xl font-bold">Assistly</h1>
           <p className="text-slate-400 text-sm mt-2">Create your workspace</p>
         </div>
 
-        <button type="button" onClick={handleGoogleLogin} disabled={googleLoading} className="w-full border border-slate-700 rounded-lg py-3 mb-6 hover:bg-slate-800 transition flex items-center justify-center gap-3 disabled:opacity-50">
-          {googleLoading ? "Connecting..." : "Continue with Google"}
-        </button>
+        {/* ⚡ The Official Google Button Container (Matches Login exactly) */}
+        <div 
+          ref={googleButtonContainerRef} 
+          className="mb-6 flex justify-center w-full min-h-11"
+        ></div>
 
         <div className="flex items-center gap-4 mb-6">
           <div className="h-px flex-1 bg-slate-800" /><span className="text-xs text-slate-500 uppercase font-semibold">Or Email</span><div className="h-px flex-1 bg-slate-800" />
@@ -192,14 +221,15 @@ export default function RegisterForm() {
             </div>
           </div>
 
-          <button type="submit" disabled={isLoading} className="w-full py-3 rounded-lg font-semibold bg-indigo-600 hover:bg-indigo-500 transition-all">
+          <button type="submit" disabled={isLoading || googleLoading} className="w-full py-3 rounded-lg font-semibold bg-indigo-600 hover:bg-indigo-500 transition-all">
             {isLoading ? "Creating..." : "Create Workspace"}
           </button>
         </form>
 
-        <p className="text-center mt-6 text-slate-400 text-sm">Already have an account? <Link href="/auth/login" className="text-indigo-400 hover:text-indigo-300 font-medium">Sign in</Link></p>
+        <p className="text-center mt-6 text-slate-400 text-sm">Already have an account? <Link href="/login" className="text-indigo-400 hover:text-indigo-300 font-medium">Sign in</Link></p>
       </div>
 
+      {/* OTP Modal */}
       {showOtp && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-slate-900 p-8 rounded-xl w-full max-w-sm border border-slate-800">
@@ -207,6 +237,32 @@ export default function RegisterForm() {
             <p className="text-slate-400 mb-6 text-sm">Enter the 6-digit OTP sent to <span className="text-white font-medium">{email}</span></p>
             <input type="text" maxLength={6} value={otpCode} onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, ""))} placeholder="000000" className="w-full px-4 py-4 rounded-lg bg-slate-950 border border-slate-700 text-center text-3xl tracking-[0.5em] font-mono mb-4 focus:outline-none" />
             <button onClick={handleVerify} disabled={isLoading || otpCode.length !== 6} className="w-full bg-indigo-600 py-3 rounded-lg font-semibold">{isLoading ? "Verifying..." : "Verify OTP"}</button>
+          </div>
+        </div>
+      )}
+
+      {/* Google Setup Modal */}
+      {showGoogleSetup && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-900 p-8 rounded-xl w-full max-w-sm border border-slate-800 shadow-2xl">
+            <h3 className="text-2xl font-bold mb-2">Almost there!</h3>
+            <p className="text-slate-400 mb-6 text-sm">Set up your workspace to continue.</p>
+            <div className="mb-4">
+              <label className="block mb-2 text-sm">Business Name</label>
+              <input type="text" value={googleCompanyName} onChange={(e) => setGoogleCompanyName(e.target.value)} placeholder="Acme Corp" className="w-full px-4 py-3 rounded-lg bg-slate-950 border border-slate-700 focus:outline-none focus:border-indigo-500" />
+            </div>
+            <div className="mb-4">
+              <label className="block mb-2 text-sm">Workspace URL</label>
+              <div className="flex">
+                <input type="text" value={googleSubdomain} onChange={(e) => setGoogleSubdomain(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""))} placeholder="acme" className="flex-1 rounded-l-lg bg-slate-950 border border-slate-700 px-4 py-3 outline-none focus:border-indigo-500" />
+                <div className="px-4 flex items-center bg-slate-800 rounded-r-lg border border-slate-700 text-slate-400">.assistly.com</div>
+              </div>
+            </div>
+            {error && <p className="text-red-400 text-sm mb-4 text-center">{error}</p>}
+            <button onClick={handleGoogleSetup} disabled={isLoading || !googleSubdomain || !googleCompanyName} className="w-full bg-indigo-600 hover:bg-indigo-700 py-3 rounded-lg font-semibold transition-colors disabled:opacity-50">
+              {isLoading ? "Setting up..." : "Create Workspace"}
+            </button>
+            <button onClick={() => { setShowGoogleSetup(false); setError(""); }} className="w-full mt-4 text-slate-400 hover:text-white text-sm">Cancel</button>
           </div>
         </div>
       )}
