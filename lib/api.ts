@@ -3,8 +3,7 @@ import axios from 'axios';
 // 1. Create the base Axios instance
 export const api = axios.create({
     // Points to your FastAPI backend (make sure .env.local has NEXT_PUBLIC_API_URL=http://localhost:8000)
-    baseURL: process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000', 
-    
+    baseURL: process.env.NEXT_PUBLIC_API_URL, 
     // ⚡ CRITICAL: This tells the browser to automatically attach your HTTP-Only refresh cookie!
     withCredentials: true, 
     

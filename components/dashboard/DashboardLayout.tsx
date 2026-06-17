@@ -31,7 +31,7 @@ export default function DashboardLayout() {
       <aside className="w-64 border-r border-slate-800 bg-slate-900/50 p-6 flex flex-col justify-between">
         <div>
           <div className="flex items-center gap-2 mb-8">
-            <span className="text-xl font-bold bg-gradient-to-r from-indigo-400 to-cyan-400 bg-clip-text text-transparent">
+            <span className="text-xl font-bold bg-lem-to-r from-indigo-400 to-cyan-400 bg-clip-text text-transparent">
               Assistly
             </span>
             <span className="text-xs px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 font-mono uppercase">
