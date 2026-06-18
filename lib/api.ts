@@ -1,74 +1,70 @@
 import axios from 'axios';
 
-// 1. Create the base Axios instance
+// ⚡ 1. The Bridge Variable (In-Memory Token for Axios)
+let currentAccessToken: string | null = null;
+
+// Expose a way for your AuthContext to hand the token to Axios
+export const setAxiosToken = (token: string | null) => {
+    currentAccessToken = token;
+};
+
 export const api = axios.create({
-    // Points to your FastAPI backend (make sure .env.local has NEXT_PUBLIC_API_URL=http://localhost:8000)
-    baseURL: process.env.NEXT_PUBLIC_API_URL, 
-    // ⚡ CRITICAL: This tells the browser to automatically attach your HTTP-Only refresh cookie!
-    withCredentials: true, 
-    
+    baseURL: process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000", 
+    withCredentials: true, // ⚡ Required to send HttpOnly cookies
     headers: {
         'Content-Type': 'application/json',
     },
 });
 
-// 2. REQUEST INTERCEPTOR: The Front Door Bouncer
-// Before any request leaves the frontend, attach the Access Token
+// 2. REQUEST INTERCEPTOR
 api.interceptors.request.use((config) => {
-    // Next.js safety check: Only access localStorage on the browser (not the server)
-    if (typeof window !== 'undefined') { 
-        const token = localStorage.getItem('access_token');
-        if (token && config.headers) {
-            config.headers.Authorization = `Bearer ${token}`;
-        }
+    // ⚡ Read from our secure memory variable, not localStorage
+    if (currentAccessToken && config.headers) {
+        config.headers.Authorization = `Bearer ${currentAccessToken}`;
     }
     return config;
 }, (error) => {
     return Promise.reject(error);
 });
 
-// 3. RESPONSE INTERCEPTOR: The Silent Refresher
-// If FastAPI rejects our request, intercept the error before the UI sees it
+// 3. RESPONSE INTERCEPTOR
 api.interceptors.response.use((response) => {
     return response;
 }, async (error) => {
     const originalRequest = error.config;
 
-    // If FastAPI says the token is expired (401) AND we haven't tried refreshing yet
-    if (error.response?.status === 401 && !originalRequest._retry) {
-        originalRequest._retry = true; // Mark it so we don't get stuck in an infinite loop
+    // Prevent infinite loops by ignoring 401s from the refresh endpoint itself
+    if (
+        error.response?.status === 401 && 
+        !originalRequest._retry &&
+        originalRequest.url !== '/auth/refresh'
+    ) {
+        originalRequest._retry = true; 
 
         try {
-            // ⚡ Hit the backend refresh route we built!
-            // The browser will automatically send the HTTP-Only cookie with this request.
-            const refreshResponse = await api.post('/refresh');
-
+            // Hit the refresh endpoint (Make sure this matches your FastAPI route!)
+            const refreshResponse = await api.post('/auth/refresh');
+            
             // Grab the brand new access token
             const newAccessToken = refreshResponse.data.access_token;
             
-            // Save it to local storage
-            if (typeof window !== 'undefined') {
-                localStorage.setItem('access_token', newAccessToken);
-            }
+            // ⚡ Update Axios's memory
+            setAxiosToken(newAccessToken);
 
-            // Update the original failed request with the new token...
+            // Update the failed request and resend it
             originalRequest.headers.Authorization = `Bearer ${newAccessToken}`;
-            
-            // ...and resend it! The user will never know it failed the first time.
             return api(originalRequest);
             
         } catch (refreshError) {
-            // If the refresh FAILS (e.g., refresh token is blacklisted or expired),
-            // it's game over. Wipe the storage and kick them to the login screen.
+            // Refresh failed (cookie expired, user actually logged out)
+            setAxiosToken(null);
             if (typeof window !== 'undefined') {
-                localStorage.removeItem('access_token');
                 localStorage.removeItem('user');
-                window.location.href = '/login';
+                window.location.replace('/login');
             }
             return Promise.reject(refreshError);
         }
     }
     
-    // If it's a normal error (like 400 Bad Request), just pass it to the UI
     return Promise.reject(error);
 });
