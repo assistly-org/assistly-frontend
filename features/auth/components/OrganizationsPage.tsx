@@ -22,7 +22,7 @@ export default function OrganizationsPage() {
       try {
         // ⚡ REMOVED the aggressive manual token checks!
         // We trust proxy.ts. We just make the API call.
-        const res = await api.get("/users/me/organizations");
+        const res = await api.get("/auth/profile");
         setOrganizations(res.data);
       } catch (err: any) {
         setError("Failed to load organizations.");

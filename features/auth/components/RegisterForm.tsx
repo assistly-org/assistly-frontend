@@ -1,14 +1,11 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState } from "react";
 import Link from "next/link";
-import { api } from "@/lib/api";
-
-declare global {
-  interface Window {
-    google: any;
-  }
-}
+import { useRouter } from "next/navigation";
+import { AuthService } from "@/services/auth.service";
+import { useAuth } from "@/contexts/AuthContext";
+import { useGoogleAuth } from "@/hooks/useGoogleAuth";
 
 export default function RegisterForm() {
   const [name, setName] = useState("");
@@ -20,125 +17,65 @@ export default function RegisterForm() {
   const [otpCode, setOtpCode] = useState("");
   const [showOtp, setShowOtp] = useState(false);
 
-  const [error, setError] = useState("");
+  const [localError, setLocalError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
-  const [googleLoading, setGoogleLoading] = useState(false);
 
-  const isGoogleInitialized = useRef(false);
+  const router = useRouter();
 
-  const handleGoogleCallback = async (response: { credential: string }) => {
-    setGoogleLoading(true);
-    setError("");
+  // ⚡ 1. Bring in googleLogin from Context
+  const { googleLogin } = useAuth();
 
+  // ⚡ 2. Initialize Google Auth cleanly
+  useGoogleAuth(async (credential) => {
+    setLocalError("");
+    setIsLoading(true);
     try {
-      const res = await api.post("/auth/google", {
-        id_token: response.credential,
-      });
-      const data = res.data;
-
-      if (data?.access_token) {
-        localStorage.setItem("access_token", data.access_token);
-
-        if (data.requires_workspace_setup) {
-          window.location.replace("/onboarding");
-        } else {
-          window.location.replace("/organizations");
-        }
-      } else {
-        setError(data?.message || "Google registration failed.");
-      }
+      await googleLogin(credential);
     } catch (err: any) {
-      const detail = err.response?.data?.detail;
-      setError(detail || "Failed to connect to the server.");
+      setLocalError(
+        err.response?.data?.detail || "Google registration failed.",
+      );
     } finally {
-      setGoogleLoading(false);
+      setIsLoading(false);
     }
-  };
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-
-    const checkGoogle = setInterval(() => {
-      if (window.google?.accounts?.id) {
-        if (isGoogleInitialized.current) {
-          clearInterval(checkGoogle);
-          return;
-        }
-
-        isGoogleInitialized.current = true;
-        clearInterval(checkGoogle);
-
-        window.google.accounts.id.initialize({
-          client_id: process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID!,
-          callback: handleGoogleCallback,
-          auto_select: false,
-          cancel_on_tap_outside: false,
-          use_fedcm_for_prompt: true,
-        });
-
-        const buttonContainer = document.getElementById("google-button-container");
-        if (buttonContainer) {
-          window.google.accounts.id.renderButton(buttonContainer, {
-            theme: "outline",
-            size: "large",
-            width: 300, // Fixed width
-          });
-        }
-
-        // ⚡ THE FIX: Called completely empty. Let FedCM do its thing.
-        window.google.accounts.id.prompt();
-      }
-    }, 100);
-
-    return () => clearInterval(checkGoogle);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  });
 
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
-    setError("");
+    setLocalError("");
     setIsLoading(true);
 
     try {
-      const response = await api.post("/auth/register", {
-        email,
-        password,
-        name,
-        phone,
-      });
-
-      if (response.data?.message) {
+      // ⚡ 3. Use the clean Service Layer
+      const data = await AuthService.register({ email, password, name, phone });
+      if (data?.message) {
         setShowOtp(true);
-      } else {
-        setError(response.data?.detail || "Registration failed.");
       }
     } catch (err: any) {
-      setError(err.response?.data?.detail || "Failed to connect to the server.");
+      setLocalError(err.response?.data?.detail || "Registration failed.");
     } finally {
       setIsLoading(false);
     }
   };
 
   const handleVerify = async () => {
-    setError("");
+    setLocalError("");
     setIsLoading(true);
 
     try {
-      const response = await api.post("/auth/verify", {
-        email,
-        otp_code: otpCode,
-      });
+      // ⚡ 4. Use the clean Service Layer
+      const data = await AuthService.verifyOtp(email, otpCode);
 
-      const data = response.data;
       localStorage.setItem("access_token", data.access_token);
 
+      // ⚡ 5. Native Next.js Smart Routing
       if (data.requires_workspace_setup) {
-        window.location.replace("/onboarding");
+        router.replace("/onboarding");
       } else {
-        window.location.replace("/organizations");
+        router.replace("/organizations");
       }
     } catch (err: any) {
-      setError(err.response?.data?.detail || "Verification failed.");
+      setLocalError(err.response?.data?.detail || "Verification failed.");
     } finally {
       setIsLoading(false);
     }
@@ -155,18 +92,23 @@ export default function RegisterForm() {
           <p className="text-slate-400 text-sm mt-2">Create your account</p>
         </div>
 
-        <div id="google-button-container" className="mb-6 flex justify-center w-full min-h-11"></div>
+        <div
+          id="google-button-container"
+          className="mb-6 flex justify-center w-full min-h-11"
+        ></div>
 
         <div className="flex items-center gap-4 mb-6">
           <div className="h-px flex-1 bg-slate-800" />
-          <span className="text-xs text-slate-500 uppercase font-semibold">Or Email</span>
+          <span className="text-xs text-slate-500 uppercase font-semibold">
+            Or Email
+          </span>
           <div className="h-px flex-1 bg-slate-800" />
         </div>
 
         <form onSubmit={handleRegister} className="space-y-5">
-          {error && !showOtp && (
+          {localError && !showOtp && (
             <div className="bg-red-500/10 border border-red-500/50 text-red-500 text-sm p-3 rounded-lg text-center">
-              {error}
+              {localError}
             </div>
           )}
 
@@ -231,8 +173,8 @@ export default function RegisterForm() {
 
           <button
             type="submit"
-            disabled={isLoading || googleLoading}
-            className="w-full py-3 rounded-lg font-semibold bg-indigo-600 hover:bg-indigo-500 transition-all"
+            disabled={isLoading}
+            className={`w-full py-3 rounded-lg font-semibold transition-all ${isLoading ? "bg-indigo-600/50 cursor-not-allowed" : "bg-indigo-600 hover:bg-indigo-500 shadow-lg shadow-indigo-500/20"}`}
           >
             {isLoading ? "Creating..." : "Create Account"}
           </button>
@@ -240,7 +182,10 @@ export default function RegisterForm() {
 
         <p className="text-center mt-6 text-slate-400 text-sm">
           Already have an account?{" "}
-          <Link href="/login" className="text-indigo-400 hover:text-indigo-300 font-medium">
+          <Link
+            href="/login"
+            className="text-indigo-400 hover:text-indigo-300 font-medium"
+          >
             Sign in
           </Link>
         </p>
@@ -251,7 +196,8 @@ export default function RegisterForm() {
           <div className="bg-slate-900 p-8 rounded-xl w-full max-w-sm border border-slate-800">
             <h3 className="text-2xl font-bold mb-2">Check your email</h3>
             <p className="text-slate-400 mb-6 text-sm">
-              Enter the 6-digit OTP sent to <span className="text-white font-medium">{email}</span>
+              Enter the 6-digit OTP sent to{" "}
+              <span className="text-white font-medium">{email}</span>
             </p>
             <input
               type="text"
