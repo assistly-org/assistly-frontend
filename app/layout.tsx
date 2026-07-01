@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import Script from "next/script";
 import { AuthProvider } from "@/contexts/AuthContext"; // ⚡ 1. Import the Context Provider
+import { Providers } from "./providers"; // ⚡ React Query provider
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -36,10 +37,12 @@ export default function RootLayout({
           strategy="afterInteractive"
         />
         
-        {/* ⚡ 2. Wrap the entire app in the AuthProvider */}
-        <AuthProvider>
-          {children}
-        </AuthProvider>
+        {/* ⚡ 2. React Query provider wraps everything, AuthProvider wraps children */}
+        <Providers>
+          <AuthProvider>
+            {children}
+          </AuthProvider>
+        </Providers>
       </body>
     </html>
   );

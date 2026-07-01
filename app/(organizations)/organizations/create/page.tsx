@@ -2,12 +2,14 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 // Import your TenantService here. Update the path if yours is different!
 import { TenantService } from "@/services/tenant.service"; 
 
 export default function CreateOrganizationPage() {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const [formData, setFormData] = useState({
     company_name: "",
     subdomain: "",
@@ -37,7 +39,11 @@ export default function CreateOrganizationPage() {
     try {
       // Using your clean TenantService instead of a raw fetch!
       await TenantService.CreateOrganization(formData);
-      
+
+      // Tell React Query the organizations list is stale so it refetches
+      // next time it's read, instead of serving the cached (now outdated) list.
+      await queryClient.invalidateQueries({ queryKey: ["organizations"] });
+
       // Success! Redirect back to the organizations list
       router.push("/organizations");
     } catch (err: any) {
