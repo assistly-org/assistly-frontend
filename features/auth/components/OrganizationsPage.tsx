@@ -1,13 +1,22 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { api } from "@/lib/api";
 import Link from "next/link";
+import { TenantService } from "@/services/tenant.service";
 
+// 1. Updated interface to match the new JSON response perfectly
 interface Organization {
-  id: string | number;
+  id: string;
   name: string;
-  slug: string;
+  subdomain: string;
+  status: string;
+  plan_tier: string;
+  is_active: boolean;
+  website_url: string | null;
+  owner_name: string | null;
+  created_by: string;
+  created_at: string;
+  logo_url: string | null;
 }
 
 export default function OrganizationsPage() {
@@ -15,15 +24,16 @@ export default function OrganizationsPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState("");
-  const [showProfileMenu, setShowProfileMenu] = useState(false);
 
   useEffect(() => {
     const fetchOrganizations = async () => {
       try {
-        // ⚡ REMOVED the aggressive manual token checks!
-        // We trust proxy.ts. We just make the API call.
-        const res = await api.get("/auth/profile");
-        setOrganizations(res.data);
+        const res = await TenantService.GetallOrganizations();
+        if (res && res.tenants) {
+          setOrganizations(res.tenants);
+        } else {
+          setOrganizations([]);
+        }
       } catch (err: any) {
         setError("Failed to load organizations.");
       } finally {
@@ -34,32 +44,24 @@ export default function OrganizationsPage() {
     fetchOrganizations();
   }, []);
 
-  const handleLogout = async () => {
-    // 1. Clear the local storage token
-    localStorage.removeItem("access_token");
-    
-    // 2. IMPORTANT: You must call an API endpoint here to tell the backend 
-    // to delete the HTTP-only refresh_token cookie, otherwise proxy.ts 
-    // will just bounce you right back into the app!
-    try {
-      await api.post("/auth/logout"); 
-    } catch (e) {
-      console.error("Logout API failed", e);
-    }
-
-    // 3. Now it is safe to go to login
-    window.location.replace("/login");
-  };
-
-  const handleOrganizationSelect = (slug: string) => {
-    const token = localStorage.getItem("access_token");
-
+  const handleOrganizationSelect = (subdomain: string) => {
     const isLocal = window.location.host.includes("localhost");
     const baseHost = isLocal
       ? "localhost:3000"
       : window.location.host.split(".").slice(-2).join(".");
 
-    window.location.href = `http://${slug}.${baseHost}/dashboard?token=${token}`;
+    window.location.href = `http://${subdomain}.${baseHost}/dashboard`;
+  };
+
+  // 2. New handler specifically for the settings route
+  const handleSettingsSelect = (e: React.MouseEvent, subdomain: string) => {
+    e.stopPropagation(); // Prevents the card's main onClick from firing
+    const isLocal = window.location.host.includes("localhost");
+    const baseHost = isLocal
+      ? "localhost:3000"
+      : window.location.host.split(".").slice(-2).join(".");
+
+    window.location.href = `http://${subdomain}.${baseHost}/settings`;
   };
 
   const filteredOrganizations = organizations.filter((org) =>
@@ -68,154 +70,171 @@ export default function OrganizationsPage() {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-slate-950 flex items-center justify-center">
-        <div className="flex flex-col items-center gap-4">
-          <div className="w-6 h-6 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
+      <main className="max-w-[1000px] mx-auto px-6 py-12">
+        <div className="h-8 w-48 bg-slate-800 rounded animate-pulse mb-8"></div>
+
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
+          <div className="h-10 w-full max-w-[280px] bg-slate-800 rounded-lg animate-pulse"></div>
+          <div className="h-10 w-40 bg-slate-800 rounded-lg animate-pulse"></div>
         </div>
-      </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {[1, 2, 3, 4, 5, 6].map((i) => (
+            <div
+              key={i}
+              className="flex items-center gap-4 p-5 bg-slate-900 border border-slate-800 rounded-xl animate-pulse shadow-sm"
+            >
+              <div className="w-10 h-10 rounded-lg bg-slate-800 shrink-0"></div>
+              <div className="flex-1 space-y-2.5">
+                <div className="h-3.5 bg-slate-800 rounded w-3/4"></div>
+                <div className="h-2.5 bg-slate-800 rounded w-1/2 mt-1"></div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </main>
     );
   }
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 font-sans selection:bg-indigo-500/30">
-      {/* Top Navigation Bar */}
-      <header className="flex items-center justify-between px-6 py-3 border-b border-slate-800 bg-slate-950">
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 bg-indigo-500 rounded flex items-center justify-center text-white text-sm shadow-sm shadow-indigo-500/20">
-            ⚡
-          </div>
-          <span className="text-slate-600">/</span>
-          <span className="text-sm font-medium text-slate-200">
-            Organizations
-          </span>
-        </div>
+    <main className="max-w-[1000px] mx-auto px-6 py-12">
+      <h1 className="text-2xl font-semibold text-white mb-8">
+        Your Organizations
+      </h1>
 
-        <div className="flex items-center gap-6 text-sm text-slate-400">
-          <button className="hover:text-slate-100 transition-colors">
-            Feedback
-          </button>
-
-          {/* Global Search Placeholder */}
-          <div className="hidden md:flex items-center gap-2 px-3 py-1.5 bg-slate-900 border border-slate-800 rounded-md text-xs">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
+        <div className="relative w-full max-w-[280px]">
+          <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-500">
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+            >
               <circle cx="11" cy="11" r="8"></circle>
               <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
             </svg>
-            <span>Search...</span>
-            <span className="ml-4 px-1.5 py-0.5 bg-slate-800 rounded text-[10px] text-slate-300">
-              Ctrl K
-            </span>
           </div>
-
-          <div className="flex items-center gap-4">
-            <div className="relative">
-              <button
-                onClick={() => setShowProfileMenu(!showProfileMenu)}
-                className="w-8 h-8 rounded-full bg-slate-800 text-slate-200 flex items-center justify-center border border-slate-700 hover:border-slate-600 focus:ring-2 focus:ring-indigo-500/50 outline-none transition-all"
-              >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
-                  <circle cx="12" cy="7" r="4"></circle>
-                </svg>
-              </button>
-
-              {showProfileMenu && (
-                <div className="fixed inset-0 z-40" onClick={() => setShowProfileMenu(false)} />
-              )}
-
-              {showProfileMenu && (
-                <div className="absolute right-0 mt-2 w-48 bg-slate-900 border border-slate-800 rounded-xl shadow-xl shadow-black/50 overflow-hidden z-50 animate-in fade-in slide-in-from-top-2 duration-200">
-                  <div className="px-4 py-3 border-b border-slate-800">
-                    <p className="text-sm text-slate-400">Signed in</p>
-                  </div>
-                  <div className="border-t border-slate-800 py-1">
-                    <button
-                      onClick={handleLogout}
-                      className="w-full text-left px-4 py-2 text-sm text-red-400 hover:bg-red-500/10 hover:text-red-300 transition-colors"
-                    >
-                      Sign out
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      </header>
-
-      {/* Main Content */}
-      <main className="max-w-1000px mx-auto px-6 py-12">
-        <h1 className="text-2xl font-semibold text-white mb-8">Your Organizations</h1>
-
-        {/* Controls Row */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
-          <div className="relative w-full max-w-280px">
-            <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-500">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <circle cx="11" cy="11" r="8"></circle>
-                <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
-              </svg>
-            </div>
-            <input
-              type="text"
-              placeholder="Search for an organization"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-9 pr-4 py-2 bg-slate-900 border border-slate-800 rounded-lg text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-colors shadow-sm"
-            />
-          </div>
-
-          <Link href="/register">
-            <button className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-lg text-sm font-medium transition-all shadow-lg shadow-indigo-500/20">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <line x1="12" y1="5" x2="12" y2="19"></line>
-                <line x1="5" y1="12" x2="19" y2="12"></line>
-              </svg>
-              New organization
-            </button>
-          </Link>
+          <input
+            type="text"
+            placeholder="Search for an organization"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="w-full pl-9 pr-4 py-2 bg-slate-900 border border-slate-800 rounded-lg text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-colors shadow-sm"
+          />
         </div>
 
-        {/* Error State */}
-        {error && (
-          <div className="bg-red-500/10 border border-red-500/30 text-red-400 p-4 rounded-lg text-sm mb-6">
-            {error}
-          </div>
-        )}
+        <Link href="/organizations/create">
+          <button className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-lg text-sm font-medium transition-all shadow-lg shadow-indigo-500/20">
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+            >
+              <line x1="12" y1="5" x2="12" y2="19"></line>
+              <line x1="5" y1="12" x2="19" y2="12"></line>
+            </svg>
+            New organization
+          </button>
+        </Link>
+      </div>
 
-        {/* Organizations Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {organizations.length === 0 && !error ? (
-            <div className="col-span-full p-8 border border-dashed border-slate-800 rounded-xl text-center bg-slate-900/30">
-              <p className="text-slate-400 text-sm">No organizations found. Create one to get started.</p>
-            </div>
-          ) : filteredOrganizations.length === 0 ? (
-            <div className="col-span-full p-8 border border-dashed border-slate-800 rounded-xl text-center bg-slate-900/30">
-              <p className="text-slate-400 text-sm">No organizations match your search.</p>
-            </div>
-          ) : (
-            filteredOrganizations.map((org) => (
-              <button
-                key={org.id}
-                onClick={() => handleOrganizationSelect(org.slug)}
-                className="group flex items-center gap-4 p-5 bg-slate-900 border border-slate-800 rounded-xl hover:border-indigo-500 hover:bg-slate-800/80 transition-all text-left shadow-sm hover:shadow-md"
-              >
-                <div className="w-10 h-10 rounded-lg bg-indigo-500/10 text-indigo-400 flex items-center justify-center font-bold text-lg border border-indigo-500/20 group-hover:bg-indigo-500 group-hover:text-white transition-colors shrink-0">
-                  {org.name.charAt(0).toUpperCase()}
+      {error && (
+        <div className="bg-red-500/10 border border-red-500/30 text-red-400 p-4 rounded-lg text-sm mb-6">
+          {error}
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        {organizations.length === 0 && !error ? (
+          <div className="col-span-full p-8 border border-dashed border-slate-800 rounded-xl text-center bg-slate-900/30">
+            <p className="text-slate-400 text-sm">
+              No organizations found. Create one to get started.
+            </p>
+          </div>
+        ) : filteredOrganizations.length === 0 ? (
+          <div className="col-span-full p-8 border border-dashed border-slate-800 rounded-xl text-center bg-slate-900/30">
+            <p className="text-slate-400 text-sm">
+              No organizations match your search.
+            </p>
+          </div>
+        ) : (
+          filteredOrganizations.map((org) => (
+            // Changed from <button> to <div> to allow for the nested settings button without HTML warnings
+            <div
+              key={org.id}
+              onClick={() => handleOrganizationSelect(org.subdomain)}
+              className="group flex items-center justify-between p-5 bg-slate-900 border border-slate-800 rounded-xl hover:border-indigo-500 hover:bg-slate-800/80 transition-all text-left shadow-sm hover:shadow-md cursor-pointer"
+            >
+              <div className="flex items-center gap-4 overflow-hidden flex-1">
+                <div className="w-10 h-10 rounded-lg bg-indigo-500/10 text-indigo-400 flex items-center justify-center font-bold text-lg border border-indigo-500/20 group-hover:bg-indigo-500 group-hover:text-white transition-colors shrink-0 overflow-hidden">
+                  {org.logo_url ? (
+                    <img
+                      src={org.logo_url}
+                      alt={org.name}
+                      className="w-full h-full object-cover"
+                    />
+                  ) : (
+                    org.name.charAt(0).toUpperCase()
+                  )}
                 </div>
-                <div className="overflow-hidden">
-                  <h3 className="text-sm font-semibold text-slate-200 truncate group-hover:text-white transition-colors">
+                <div className="overflow-hidden flex-1">
+                  <h3 className="text-sm font-semibold text-slate-200 truncate group-hover:text-white transition-colors capitalize">
                     {org.name}
                   </h3>
-                  <p className="text-xs text-slate-500 mt-0.5 truncate">
-                    Free Plan · {org.slug}.assistly.com
-                  </p>
+                  <div className="flex items-center gap-2 mt-0.5">
+                    <span className="text-[10px] uppercase tracking-wider font-semibold text-emerald-400 bg-emerald-400/10 px-1.5 py-0.5 rounded">
+                      {org.plan_tier}
+                    </span>
+                    {org.status !== "active" && (
+                      <span className="text-[10px] uppercase tracking-wider font-semibold text-amber-400 bg-amber-400/10 px-1.5 py-0.5 rounded">
+                        {org.status}
+                      </span>
+                    )}
+                    <p className="text-xs text-slate-500 truncate">
+                      {org.subdomain}.assistly.com
+                    </p>
+                  </div>
+                  {org.website_url && (
+                    <p className="text-[11px] text-slate-600 truncate mt-0.5">
+                      {org.website_url
+                        .replace(/^https?:\/\//, "")
+                        .replace(/\/$/, "")}
+                    </p>
+                  )}
                 </div>
+              </div>
+
+              {/* 3. New Settings Button on the right side */}
+              <button
+                onClick={(e) => handleSettingsSelect(e, org.subdomain)}
+                className="opacity-0 group-hover:opacity-100 p-2 text-slate-500 hover:text-indigo-400 hover:bg-indigo-500/10 rounded-md transition-all shrink-0 focus:opacity-100"
+                title="Settings"
+                aria-label={`${org.name} Settings`}
+              >
+                <svg
+                  width="18"
+                  height="18"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <circle cx="12" cy="12" r="3"></circle>
+                  <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+                </svg>
               </button>
-            ))
-          )}
-        </div>
-      </main>
-    </div>
+            </div>
+          ))
+        )}
+      </div>
+    </main>
   );
 }

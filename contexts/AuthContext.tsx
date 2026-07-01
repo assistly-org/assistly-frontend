@@ -16,7 +16,7 @@ interface User {
   id: string;
   email: string;
   name: string;
-  tenant_slug: string;
+  tenant_subdomain: string;
 }
 
 interface AuthContextType {
@@ -40,23 +40,30 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
   const router = useRouter();
 
+  // Inside AuthProvider
   useEffect(() => {
     let isMounted = true;
-    let timeoutId: NodeJS.Timeout; // ⚡ 1. Create a variable to hold the timer
+    let timeoutId: NodeJS.Timeout;
 
     const initializeAuth = async () => {
+      // ⚡ THE FIX: Check for the local storage proxy first
+      const storedUser = localStorage.getItem("user");
+
+      if (!storedUser) {
+        // No user in storage? Skip the refresh API call entirely.
+        if (isMounted) setIsInitialized(true);
+        return;
+      }
+
       try {
+        // Only runs if we think the user MIGHT have a valid cookie
         const data = await AuthService.refreshToken();
 
         if (!isMounted) return;
 
         setAccessToken(data.access_token);
         setAxiosToken(data.access_token);
-
-        const storedUser = localStorage.getItem("user");
-        if (storedUser) {
-          setUser(JSON.parse(storedUser));
-        }
+        setUser(JSON.parse(storedUser)); // We already verified it exists above
 
         setIsInitialized(true);
       } catch (error) {
@@ -67,7 +74,6 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
           setAxiosToken(null);
           setUser(null);
           localStorage.removeItem("user");
-
           setIsInitialized(true);
         } else {
           console.warn("Auth check interrupted.");
@@ -75,12 +81,10 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       }
     };
 
-    // ⚡ 2. YOUR FIX: Delay the initial check slightly
     timeoutId = setTimeout(() => {
       initializeAuth();
-    }, 320); // 200ms is the sweet spot.
+    }, 320);
 
-    // Cleanup function
     return () => {
       isMounted = false;
       clearTimeout(timeoutId);
